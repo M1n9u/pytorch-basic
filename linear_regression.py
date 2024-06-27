@@ -27,7 +27,6 @@ X, Y = data_to_numpy(df)
 X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.25, random_state=1)
 print('train dataset shape: ', X_train.shape, Y_train.shape)
 print('test dataset shape: ', X_test.shape, Y_test.shape)
-test
 
 class linear_Regression(nn.Module):
     def __init__(self, in_channel, out_channel):
