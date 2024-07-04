@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 train_dataset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transforms.ToTensor())
 test_dataset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transforms.ToTensor())
 # Batch size = 64
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
 # Plot images from each category
 data, target = next(iter(train_loader))
@@ -35,8 +35,14 @@ class cnn_Model(nn.Module):
         super(cnn_Model, self).__init__()
         self.cnn1 = nn.Sequential(nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, stride=1, padding=1),
                                   nn.BatchNorm2d(16),
+                                  nn.ReLU(),
+                                  nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, padding=1),
+                                  nn.BatchNorm2d(16),
                                   nn.ReLU())
         self.cnn2 = nn.Sequential(nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
+                                  nn.BatchNorm2d(32),
+                                  nn.ReLU(),
+                                  nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
                                   nn.BatchNorm2d(32),
                                   nn.ReLU())
         self.linear1 = nn.Sequential(nn.Linear(in_features=8*8*32, out_features=1024),
