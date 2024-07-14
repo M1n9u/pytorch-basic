@@ -26,7 +26,7 @@ for files in filenames:
 
 import torch
 from torch import nn
-import torch.functional as F
+import torch.nn.functional as F
 from torch.optim import Adam
 
 def nameToTensor(name):
@@ -46,7 +46,7 @@ class simpleRNN(nn.Module):
     def forward(self, x, hid):
         hidden = F.tanh(self.linear(x)+self.hid(hid))
         output = self.out(hidden)
-        return output
+        return output, hidden
 
     def initHidden(self):
         return torch.zeros(1,self.hidden_channel)
@@ -56,7 +56,7 @@ n_hidden = n_input
 n_output = len(country)
 criterion = nn.CrossEntropyLoss()
 model = simpleRNN(n_input, n_hidden, n_output)
-optimizer = Adam(model.parameters(), lr=0.005, weight_decay=0.01)
+optimizer = Adam(model.parameters(), lr=0.0015)
 
 import random
 
@@ -66,6 +66,41 @@ def randomSample():
     name = selected_names[random.randint(0,len(selected_names)-1)]
     category = list(names.keys())[idx]
     x = nameToTensor(name)
-    y = torch.tensor(country.index(category))
-    return x, y
+    y = torch.zeros(1, len(country))
+    y[0][country.index(category)] = 1
+    return name, category, x, y
 
+num_train = 100000
+train_accuracy = []
+correct = 0.0
+running_loss = 0.0
+for epoch in range(num_train):
+    name, category, x, y = randomSample()
+    hidden = model.initHidden()
+    for i in range(len(x)):
+        output, hidden = model(x[i], hidden)
+    optimizer.zero_grad()
+    loss = criterion(output, y)
+    loss.backward()
+    optimizer.step()
+    running_loss += loss.item()
+    pred, label = torch.argmax(output, dim=1), torch.argmax(y, dim=1)
+    correct += (pred == label).item()
+    if ((epoch+1)%10000) == 0:
+        average_loss = running_loss/10000.0
+        running_loss = 0.0
+        train_accuracy.append(correct/100.0)
+        correct = 0.0
+        check = '✓' if pred == label else '✗ (%s)' % category
+        print('%d %d%% %.4f %s / %s %s' % (
+        epoch+1, (epoch+1) / num_train * 100, average_loss, name, country[pred], check))
+
+
+import matplotlib.pyplot as plt
+
+plt.figure()
+plt.plot(range(len(train_accuracy)), train_accuracy)
+plt.title("Train Accuracy")
+plt.xlabel("Num of names")
+plt.ylabel("Accuracy(%)")
+plt.show()
