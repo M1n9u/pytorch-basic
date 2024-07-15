@@ -59,6 +59,7 @@ model = simpleRNN(n_input, n_hidden, n_output)
 optimizer = Adam(model.parameters(), lr=0.0015)
 
 import random
+import numpy as np
 
 def randomSample():
     idx = random.randint(0, len(names) - 1)
@@ -74,6 +75,7 @@ num_train = 100000
 train_accuracy = []
 correct = 0.0
 running_loss = 0.0
+confusion = np.zeros((n_output, n_output))
 for epoch in range(num_train):
     name, category, x, y = randomSample()
     hidden = model.initHidden()
@@ -86,6 +88,7 @@ for epoch in range(num_train):
     running_loss += loss.item()
     pred, label = torch.argmax(output, dim=1), torch.argmax(y, dim=1)
     correct += (pred == label).item()
+    confusion[pred.item()][label.item()] += 1
     if ((epoch+1)%10000) == 0:
         average_loss = running_loss/10000.0
         running_loss = 0.0
@@ -98,9 +101,14 @@ for epoch in range(num_train):
 
 import matplotlib.pyplot as plt
 
-plt.figure()
-plt.plot(range(len(train_accuracy)), train_accuracy)
-plt.title("Train Accuracy")
-plt.xlabel("Num of names")
-plt.ylabel("Accuracy(%)")
+fig, ax = plt.subplots(1,2)
+ax[0].plot(range(len(train_accuracy)), train_accuracy)
+ax[0].set_title("Train Accuracy")
+ax[0].set_xlabel("Num of names")
+ax[0].set_ylabel("Accuracy(%)")
+
+ax[1].matshow(confusion)
+ax[1].set_title("Confusion Map")
+ax[1].set_xlabel("Actual class")
+ax[1].set_ylabel("Predicted class")
 plt.show()
