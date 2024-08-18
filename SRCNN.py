@@ -4,193 +4,192 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import gc
+import random
 
 filenames = glob("data/T91/*.png")
 original_images = []
 
-hmin, wmin = 9999, 9999
 for filename in filenames:
     if os.path.exists(filename):
         img = cv2.imread(filename)
         if img is not None:
-            imsize = img.shape
-            hmin, wmin = min(hmin, imsize[0]), min(wmin, imsize[1])
             original_images.append(img)
 
-def rgb2ycbcr(im):
-    cbcr = np.empty_like(im)
-    r = im[:,:,0]
-    g = im[:,:,1]
-    b = im[:,:,2]
-    # Y
-    cbcr[:,:,0] = .299 * r + .587 * g + .114 * b
-    # Cb
-    cbcr[:,:,1] = 128 - .169 * r - .331 * g + .5 * b
-    # Cr
-    cbcr[:,:,2] = 128 + .5 * r - .419 * g - .081 * b
-    return np.uint8(cbcr)
-
-def ycbcr2rgb(im):
-    rgb = np.empty_like(im)
-    y   = im[:,:,0]
-    cb  = im[:,:,1] - 128
-    cr  = im[:,:,2] - 128
-    # R
-    rgb[:,:,0] = y + 1.402 * cr
-    # G
-    rgb[:,:,1] = y - .34414 * cb - .71414 * cr
-    # B
-    rgb[:,:,2] = y + 1.772 * cb
-    return np.uint8(rgb)
-
-scale = 2
-cropped_images = []
+scale = 1.5
+hr_images = []
 for img in iter(original_images):
     height, width = img.shape[:2]
-    hmin, wmin = (hmin//scale)*scale, (wmin//scale)*scale
+    hmin, wmin = round(height/scale), round(width/scale)
+    hmin, wmin = round(hmin*scale), round(wmin*scale)
     h_center, w_center = height//2, width//2
     h_start, w_start = h_center - (hmin//2), w_center - (wmin//2)
-    crop_img = img[h_start:h_start + hmin, w_start:w_start + wmin, :]
-    cropped_images.append(rgb2ycbcr(crop_img))
+    crop_img = np.array(img[h_start:h_start + hmin, w_start:w_start + wmin, :]).astype(np.float32)
+    hr_images.append(crop_img/255.0)
 
-hr_images = np.array(cropped_images).astype(np.float32)
-hr_images /= 255.0
-
-del original_images, cropped_images
+del original_images
 
 lr_patch = []
 hr_patch = []
-lr_image = []
+lr_images = []
 for hr in iter(hr_images):
     f = 1.0/float(scale)
     downsample = cv2.resize(hr, (0,0), fx=f, fy=f, interpolation=cv2.INTER_AREA)
     lr = cv2.resize(downsample, (0,0), fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-    lr_image.append(lr)
+    lr_images.append(lr)
     patch_size = 33
     stride = 14
+    output_size = 33
+    pad = (patch_size - output_size) // 2
     for i in range(0, lr.shape[0] - patch_size + 1, stride):
         for j in range(0, lr.shape[1] - patch_size + 1, stride):
             lr_patch.append(lr[i:i + patch_size, j:j + patch_size])
-            hr_patch.append(hr[i:i + patch_size, j:j + patch_size])
+            hr_patch.append(hr[i + pad:i + pad + output_size, j + pad:j + pad + output_size])
 lr_patches, hr_patches = np.array(lr_patch), np.array(hr_patch)
-lr_images = np.array(lr_image)
-del lr_image, lr_patch, hr_patch
+del lr_patch, hr_patch
 gc.collect()
 print(lr_patches.shape)
+
+idx = random.randint(0, len(lr_patches) - 1)
+
+plt.figure(figsize=(20,10))
+plt.subplot(1, 2, 1)
+plt.imshow(lr_patches[idx])
+plt.title("Low Resolution")
+
+plt.subplot(1, 2, 2)
+plt.imshow(hr_patches[idx])
+plt.title("High Resolution")
+plt.show()
 
 import torch
 import torch.nn as nn
 from torchsummary import summary
+import torch.nn.functional as F
 
 # SRCNN 모델
 class srcnn(nn.Module):
     def __init__(self):
-        super(srcnn, self).__init__()
-        self.patch = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=9, padding=4, padding_mode='replicate')
-        self.nonlinear = nn.Conv2d(in_channels=64, out_channels=32, kernel_size=1, padding_mode='replicate')
-        self.recon = nn.Conv2d(in_channels=32, out_channels=3, kernel_size=5, padding=2, padding_mode='replicate')
-        self.relu = nn.ReLU()
-        nn.init.xavier_normal_(self.patch.weight.data, 0.001)
-        nn.init.xavier_normal_(self.nonlinear.weight.data, 0.001)
-        nn.init.xavier_normal_(self.recon.weight.data, 0.001)
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 64, 9, padding=4, padding_mode='replicate')
+        self.conv2 = nn.Conv2d(64, 32, 1)
+        self.conv3 = nn.Conv2d(32, 3, 5, padding=2, padding_mode='replicate')
 
     def forward(self, x):
-        out = self.relu(self.patch(x))
-        out = self.relu(self.nonlinear(out))
-        out = self.recon(out)
-        return out
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = self.conv3(x)
+
+        return x
+
+def initialize_weights(model):
+    classname = model.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(model.weight.data, 0.0, 0.02)
 
 model = srcnn()
+model.apply(initialize_weights)
 
-summary(model, (3,33,33))
+summary(model,(3,33,33))
 
 # 데이터셋
 from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms import ToTensor
-
+from torchvision import transforms as transform
 
 class customDataset(Dataset):
-    def __init__(self, data, target, transform=None):
-        self.data = data
-        self.target = target
-        self.transform = transform
+    def __init__(self, image_data, labels):
+        self.image_data = image_data
+        self.labels = labels
 
     def __len__(self):
-        return len(self.data)
+        return (len(self.image_data))
 
-    def __getitem__(self, idx):
-        data, target = self.data[idx], self.target[idx]
-        if self.transform:
-            data, target = self.transform(data), self.transform(target)
-        return data, target
+    def __getitem__(self, index):
+        image = self.image_data[index]
+        label = self.labels[index]
+        trans = transform.ToTensor()
+        return trans(image), trans(label)
 
-train_dataset = customDataset(lr_patches, hr_patches, transform=ToTensor())
-train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+train_dataset = customDataset(lr_patches, hr_patches)
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
 
 # 학습
 from torch.optim import Adam
 from tqdm import tqdm
+import math
 
-epochs = 100
-criterion = nn.MSELoss()
+def psnr(label, outputs, max_val=1.):
+    label = label.cpu().detach().numpy()
+    outputs = outputs.cpu().detach().numpy()
+    img_diff = outputs - label
+    rmse = math.sqrt(np.mean((img_diff)**2))
+    if rmse == 0: # label과 output이 완전히 일치하는 경우
+        return 100
+    else:
+        psnr = 20 * math.log10(max_val/rmse)
+        return psnr
+
+epochs = 25
+criterion = nn.MSELoss(reduction='sum')
 optimizer = Adam([
-    {"params": model.patch.parameters(), "lr" : 1e-4},
-    {"params": model.nonlinear.parameters(), "lr" : 1e-4},
-    {"params": model.recon.parameters(), "lr" : 1e-5}])
+    {"params": model.conv1.parameters(), "lr" : 1e-3},
+    {"params": model.conv2.parameters(), "lr" : 1e-3},
+    {"params": model.conv3.parameters(), "lr" : 1e-4}], betas=(0.9, 0.999))
 
 model.train()
-train_loss = []
+train_psnr = []
 for epochs in tqdm(range(epochs)):
     running_loss = 0.0
     count = 0
     for i, (lowres, highres) in enumerate(train_loader):
         output = model(lowres)
         loss = criterion(output, highres)
-        running_loss += loss.item()
+        running_loss += psnr(highres, output)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         count += len(output)
     running_loss /= count
-    train_loss.append(running_loss)
+    train_psnr.append(running_loss)
+
 
 plt.figure()
-plt.plot(range(1,epochs+2),train_loss)
-plt.title("Train Loss")
+plt.plot(range(1,epochs+2),train_psnr)
+plt.title("Train PSNR")
 plt.xlabel("Epoch")
-plt.ylabel("Loss")
+plt.ylabel("PSNR")
 plt.show()
 
 # 결과 출력
-import random
 
 def denormalize(img):
-    min_px = np.min(img)
-    max_px = np.max(img)
-    img -= min_px
-    img *= 255.0/(max_px-min_px)
-    return ycbcr2rgb(img)
+    img *= 255.0
+    img = np.clip(img, 0, 255)
+    return np.uint8(img)
 
 model.eval()
-idx = random.randint(0, len(lowres)-1)
-low, high = torch.from_numpy(lr_images[idx:idx+1]), torch.from_numpy(hr_images[idx])
-low = low.permute(0,3,1,2)
-recon = model(low).permute(0,2,3,1)[0]
-low = low.permute(0,2,3,1)[0]
+idx = random.randint(0, len(lr_images) - 1)
+low, high = torch.from_numpy(lr_images[idx]).unsqueeze(0), torch.from_numpy(hr_images[idx]).unsqueeze(0)
+low, high = low.permute(0, 3, 1, 2), high.permute(0, 3, 1, 2)
 
-low_numpy, recon_numpy, high_numpy = low.detach().numpy(), recon.detach().numpy(), high.detach().numpy()
-low_numpy, recon_numpy, high_numpy = denormalize(low_numpy), denormalize(recon_numpy), denormalize(high_numpy)
+with torch.no_grad():
+    recon = model(low)
 
+low_numpy = denormalize(low[0].permute(1, 2, 0).cpu().numpy())
+recon_numpy = denormalize(recon[0].permute(1, 2, 0).cpu().numpy())
+high_numpy = denormalize(high[0].permute(1, 2, 0).cpu().numpy())
 
-plt.figure()
-plt.subplot(1,3,1)
+plt.figure(figsize=(15, 5))
+plt.subplot(1, 3, 1)
 plt.imshow(low_numpy)
 plt.title("Low Resolution")
-plt.subplot(1,3,2)
+
+plt.subplot(1, 3, 2)
 plt.imshow(high_numpy)
 plt.title("High Resolution")
-plt.subplot(1,3,3)
+
+plt.subplot(1, 3, 3)
 plt.imshow(recon_numpy)
-plt.title("SRCNN")
+plt.title("SRCNN Reconstructed")
+
 plt.show()
